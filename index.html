@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Why Do We Dream? | Documentary Slideshow</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 1920px;
+    height: 1080px;
+    background: radial-gradient(circle at center, #0a0a0f, #000);
+    font-family: 'Poppins', 'Inter', sans-serif;
+    color: #f0f0f0;
+    overflow: hidden;
+  }
+  .particles {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    z-index: 0;
+  }
+  .particle {
+    position: absolute;
+    width: 2px;
+    height: 2px;
+    background: rgba(255,255,255,0.3);
+    border-radius: 50%;
+    animation: float 20s linear infinite;
+  }
+  @keyframes float {
+    from { transform: translateY(0); opacity: 0.3; }
+    to { transform: translateY(-1080px); opacity: 0; }
+  }
+  .slide {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    opacity: 0;
+    transform: scale(1.1);
+    transition: opacity 1s ease, transform 1s ease;
+    z-index: 1;
+    text-align: center;
+    padding: 0 200px;
+  }
+  .slide.active {
+    opacity: 1;
+    transform: scale(1);
+  }
+  .slide h1, .slide p {
+    margin: 20px 0;
+    opacity: 0;
+    transform: translateY(20px);
+    animation: reveal 1s forwards;
+  }
+  .slide.active h1, .slide.active p {
+    animation-delay: 0.3s;
+  }
+  @keyframes reveal {
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .counter {
+    position: absolute;
+    bottom: 20px;
+    right: 40px;
+    font-size: 20px;
+    color: #aaa;
+    z-index: 2;
+  }
+  /* Infographic styles */
+  .diagram {
+    width: 400px;
+    height: 200px;
+    margin-top: 40px;
+  }
+  .timeline {
+    display: flex;
+    justify-content: space-between;
+    width: 600px;
+    margin-top: 40px;
+  }
+  .timeline div {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: linear-gradient(135deg,#444,#222);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div class="particles"></div>
+
+<div id="slides">
+  <div class="slide active"><h1>Why Do We Dream?</h1><p>The Science Behind Dreams</p></div>
+  <div class="slide"><p>Every single night...</p></div>
+  <div class="slide"><p>Your brain creates an entirely different world.</p></div>
+  <div class="slide"><p>A world where anything is possible.</p></div>
+  <div class="slide"><p>You can fly.</p><svg class="diagram"><circle cx="200" cy="100" r="80" stroke="#fff" fill="none"/></svg></div>
+  <div class="slide"><p>Meet people you've never seen.</p></div>
+  <div class="slide"><p>Or relive memories from years ago.</p></div>
+  <div class="slide"><p>But have you ever wondered...</p></div>
+  <div class="slide"><p>Why do we dream?</p></div>
+  <div class="slide"><p>Scientists have studied dreams for decades.</p></div>
+  <div class="slide"><p>One leading theory suggests dreams help organize memories.</p></div>
+  <div class="slide"><p>Throughout the day...</p></div>
+  <div class="slide"><p>Your brain collects thousands of pieces of information.</p></div>
+  <div class="slide"><p>While you sleep...</p><div class="timeline"><div>Sort</div><div>Store</div><div>Connect</div></div></div>
+  <div class="slide"><p>Another theory says dreams prepare us for future situations.</p></div>
+  <div class="slide"><p>Your brain simulates possible scenarios...</p></div>
+  <div class="slide"><p>Allowing practice without real danger.</p></div>
+  <div class="slide"><p>Dreams may also help process emotions.</p></div>
+  <div class="slide"><p>Stress. Fear. Happiness. Loss.</p></div>
+  <div class="slide"><p>All of these can appear inside dreams.</p></div>
+  <div class="slide"><p>Even though researchers don't fully understand dreams...</p></div>
+  <div class="slide"><p>One thing is certain.</p></div>
+  <div class="slide"><p>Dreaming is not a waste of time.</p></div>
+  <div class="slide"><p>It is one of the most fascinating brain activities.</p></div>
+  <div class="slide"><p>And perhaps...</p></div>
+  <div class="slide"><p>The greatest mystery isn't why we dream...</p></div>
+  <div class="slide"><p>But why our brain chooses those particular stories.</p></div>
+</div>
+
+<div class="counter" id="counter">1 / 26</div>
+
+<script>
+  // Particle generation
+  const particlesContainer = document.querySelector('.particles');
+  for(let i=0;i<100;i++){
+    const p=document.createElement('div');
+    p.className='particle';
+    p.style.left=Math.random()*1920+'px';
+    p.style.top=Math.random()*1080+'px';
+    p.style.animationDuration=(10+Math.random()*20)+'s';
+    particlesContainer.appendChild(p);
+  }
+
+  const slides=document.querySelectorAll('.slide');
+  let current=0;
+  const counter=document.getElementById('counter');
+  function showSlide(index){
+    slides[current].classList.remove('active');
+    current=index;
+    slides[current].classList.add('active');
+    counter.textContent=(current+1)+' / '+slides.length;
+  }
+  document.addEventListener('keydown',e=>{
+    if(e.code==='Space'||e.code==='ArrowRight'){
+      if(current<slides.length-1) showSlide(current+1);
+    }
+    if(e.code==='ArrowLeft'){
+      if(current>0) showSlide(current-1);
+    }
+  });
+</script>
+</body>
+</html>
