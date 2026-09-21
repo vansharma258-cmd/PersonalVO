@@ -118,10 +118,7 @@ a{color:inherit;text-decoration:none;}
 ::-webkit-scrollbar-thumb{background:linear-gradient(var(--gold),var(--gold-2));border-radius:20px;border:2px solid var(--bg);}
 ::-webkit-scrollbar-thumb:hover{background:linear-gradient(var(--gold-2),var(--gold));}
 button{font-family:inherit;}
-::-webkit-scrollbar{width:8px;height:8px;}
-::-webkit-scrollbar-track{background:transparent;}
-::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:8px;}
-::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.22);}
+/* scrollbar unified - see top */
 input,select,textarea{outline:none;}
 
 /* ---------- LOADING SCREEN ---------- */
@@ -290,7 +287,7 @@ input,select,textarea{outline:none;}
   overflow-y:auto;
   overflow-x:hidden;
 }
-.sidebar.open{transform:none !important;}
+.sidebar.open{transform:translateX(0) !important;}
 .brand{
   display:flex !important;
   align-items:center;
@@ -1133,6 +1130,11 @@ body.has-dock #appShell{margin-bottom:0;}
       <input type="password" id="loginPassword" placeholder="Enter password" autocomplete="current-password">
       <div class="field-err" id="loginErr">Incorrect username or password.</div>
     </div>
+    <div class="field">
+      <label>Promo code <span style="font-weight:500;color:var(--text-faint)">(optional)</span></label>
+      <input type="text" id="loginPromo" placeholder="Paste promo for monthly ₹99 access" autocomplete="off" style="text-transform:uppercase;">
+      <div class="cell-dim" style="font-size:11px;margin-top:6px;">Bina promo → yearly plan · Valid promo → monthly ₹99 unlock</div>
+    </div>
     <button class="btn btn-primary btn-block" id="loginBtn">Sign In</button>
     <div class="link-row">
       <a id="forgotPassLink">Forgot password?</a> &nbsp;·&nbsp; <a id="trackLinkFromLogin">Track your project</a>
@@ -1257,6 +1259,9 @@ body.has-dock #appShell{margin-bottom:0;}
       <section class="view-section" id="view-emailfollowup"></section>
       <section class="view-section" id="view-emaillogs"></section>
       <section class="view-section" id="view-terminal"></section>
+      <section class="view-section" id="view-promos"></section>
+      <section class="view-section" id="view-subscriptions"></section>
+      <section class="view-section" id="view-paystore"></section>
       <section class="view-section" id="view-settings"></section>
       <!-- ============ USERS (admin only) ============ -->
       <section class="view-section" id="view-users"></section>
@@ -1346,7 +1351,7 @@ try{
 // Every top-level array collection in the app, 1:1 with a Firestore collection.
 // Document ID === the app's own record.id (never Firestore auto-IDs) so writes
 // are idempotent by nature — re-sending the same record can never create a duplicate.
-const FS_COLLECTIONS = ['users','leads','closers','deliveryPartners','freelancers','clients','projects','activities','notifications','products','productSales','tickets','hybridClosers','managers','adAccounts','campaigns','emailLogs','mediaAssets','mediaMessages','orgs'];
+const FS_COLLECTIONS = ['users','leads','closers','deliveryPartners','freelancers','clients','projects','activities','notifications','products','productSales','tickets','hybridClosers','managers','adAccounts','campaigns','emailLogs','mediaAssets','mediaMessages','orgs','promoCodes','subscriptions','paymentEvents'];
 const FS_SYSTEM_DOC = FIREBASE_AVAILABLE ? fsdb.collection('system').doc('config') : null; // holds { auth, counters, meta }
 let FS_UNSUBSCRIBERS = [];
 
@@ -1393,6 +1398,37 @@ function escapeHtml(s){
   if(s===undefined||s===null) return '';
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+
+/* --- Growth pricing constants + promo helpers (needed at login) --- */
+const PLAN_YEARLY_HC = 1199;
+const PLAN_MONTHLY_PROMO = 99;
+function generatePromoCode(){
+  const part = () => Math.random().toString(36).slice(2,6).toUpperCase();
+  return 'NXR-'+part()+'-'+part();
+}
+function findPromo(code){
+  if(!code) return null;
+  const c = String(code).trim().toUpperCase();
+  return getAll('promoCodes').find(p => p.code === c && p.active !== false) || null;
+}
+function validatePromoForUse(code){
+  const p = findPromo(code);
+  if(!p) return { ok:false, error:'Invalid promo code' };
+  if(p.active === false) return { ok:false, error:'Promo disabled' };
+  if(p.maxUses >= 0 && (p.usedCount||0) >= p.maxUses) return { ok:false, error:'Promo usage limit reached' };
+  return { ok:true, promo:p, plan:'monthly', amount: PLAN_MONTHLY_PROMO };
+}
+function sessionPromo(){
+  try{ return sessionStorage.getItem('nexora_login_promo') || ''; }catch(e){ return ''; }
+}
+function setSessionPromo(code){
+  try{
+    if(code) sessionStorage.setItem('nexora_login_promo', String(code).toUpperCase());
+    else sessionStorage.removeItem('nexora_login_promo');
+  }catch(e){}
+}
+
+
 function slug(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,''); }
 function badgeClassFor(status){ return STATUS_BADGE_CLASS[status] || 'badge-new'; }
 
@@ -1426,7 +1462,7 @@ function defaultDB(){
     activities: [], notifications: [],
     products: [], productSales: [],
     tickets: [],
-    hybridClosers: [], managers: [], adAccounts: [], campaigns: [], emailLogs: [], mediaAssets: [], mediaMessages: [],
+    hybridClosers: [], managers: [], adAccounts: [], campaigns: [], emailLogs: [], mediaAssets: [], mediaMessages: [], promoCodes: [], subscriptions: [], paymentEvents: [],
     counters: { lead:0, closer:0, dp:0, freelancer:0, client:0, project:1000, user:0, org:0, sale:1000 },
     meta: { createdAt: new Date().toISOString(), saasMode: true }
   };
@@ -1557,7 +1593,7 @@ function getAll(coll){
   // Super-admin without selected org sees everything (for support)
   if(isSuperAdmin() && !CURRENT_ORG) return DB[coll] || [];
   // Tenant-scoped
-  const scoped = ['users','leads','closers','deliveryPartners','freelancers','clients','projects','activities','notifications','products','productSales','tickets','hybridClosers','managers','adAccounts','campaigns','emailLogs','mediaAssets','mediaMessages'];
+  const scoped = ['users','leads','closers','deliveryPartners','freelancers','clients','projects','activities','notifications','products','productSales','tickets','hybridClosers','managers','adAccounts','campaigns','emailLogs','mediaAssets','mediaMessages','promoCodes','subscriptions','paymentEvents'];
   if(scoped.includes(coll)) return tenantRecords(coll);
   return DB[coll] || [];
 }
@@ -1917,8 +1953,20 @@ function resolveCurrentUser(){
 async function handleLogin(){
   const username = document.getElementById('loginUsername').value.trim();
   const pass = document.getElementById('loginPassword').value;
+  const promoIn = (document.getElementById('loginPromo')?.value||'').trim().toUpperCase();
   const err = document.getElementById('loginErr');
   if(!username || !pass){ err.style.display='block'; err.textContent='Please enter both username and password.'; return; }
+  // Promo on login: unlock monthly path (stored for session + optional consume on first paid plan)
+  if(promoIn){
+    const v = validatePromoForUse(promoIn);
+    if(!v.ok){
+      err.style.display='block'; err.textContent = 'Promo: '+(v.error||'invalid');
+      return;
+    }
+    setSessionPromo(promoIn);
+  } else {
+    setSessionPromo('');
+  }
   const user = findUserByLoginId(username);
   if(!user){ err.style.display='block'; err.textContent='Incorrect username or password.'; return; }
   if(user.status !== 'active'){ err.style.display='block'; err.textContent='This account has been disabled. Contact your admin.'; return; }
@@ -1945,6 +1993,10 @@ async function handleLogin(){
   logActivity('System', user.name+' ('+roleLabel+') logged in');
   showApp();
   toast('Welcome back, '+user.name, 'success');
+  const sp = sessionPromo();
+  if(sp){
+    setTimeout(()=>toast('Promo '+sp+' applied — monthly ₹'+PLAN_MONTHLY_PROMO+' unlocked','success'), 600);
+  }
 }
 async function handleForgotReset(){
   const key = document.getElementById('recoveryInput').value.trim().toUpperCase();
@@ -2060,6 +2112,11 @@ const NAV_CONFIG = {
       {view:'mediavault', ic:'🗂', label:'Team media'},
       {view:'emailfollowup', ic:'📧', label:'Email Follow-up'},
       {view:'emaillogs', ic:'📭', label:'Email Logs'}
+    ]},
+    {group:'Growth', items:[
+      {view:'promos', ic:'🏷', label:'Promo Codes'},
+      {view:'subscriptions', ic:'◈', label:'Subscriptions'},
+      {view:'paystore', ic:'💳', label:'Payment Store'}
     ]},
     {group:'System', items:[
       {view:'activity', ic:'≡', label:'Activity Log'},
@@ -2270,6 +2327,9 @@ const VIEW_META = {
   emailfollowup:{title:'Email Follow-up', sub:'Write once, choose leads, auto-send from your connected email'},
   emaillogs:{title:'Email Logs', sub:'History of follow-up emails sent to leads'},
   terminal:{title:'Terminal', sub:'OS-style command console — super admin full · admin limited'},
+  promos:{title:'Promo Codes', sub:'Generate codes that unlock monthly ₹99 instead of yearly lock'},
+  subscriptions:{title:'Subscriptions', sub:'Plans, payments and access windows'},
+  paystore:{title:'Payment Store', sub:'Your store link — money lands in YOUR account only'},
   settings:{title:'Settings', sub:'Account security and preferences'},
   users:{title:'Users', sub:'Manage every login account across your agency'},
   myleads:{title:'My Leads', sub:'Leads assigned to you'},
@@ -4458,7 +4518,7 @@ function renderSettingsView(){
     <div class="panel glass">
       <div class="panel-head"><div class="panel-title">Workspace</div></div>
       <div class="settings-row"><div><div class="s-title">Agency</div><div class="s-sub">Nexora — Outsourcing &amp; Delivery Platform</div></div></div>
-      <div class="settings-row"><div><div class="s-title">Data Storage</div><div class="s-sub">All data is stored locally in this browser via localStorage</div></div></div>
+      <div class="settings-row"><div><div class="s-title">Data Storage</div><div class="s-sub">Hybrid: Firestore primary + IndexedDB for media (nexora:// custom URLs) + localStorage offline cache</div></div></div>
       <div class="settings-row"><div><div class="s-title">Quick Actions</div><div class="s-sub">Manage backups and data resets</div></div><button class="btn btn-ghost btn-sm" onclick="navigateTo('backup')">Go to Backup &amp; Export</button></div>
     </div>` : ''}
   `;
@@ -7975,7 +8035,15 @@ const MEDIA_BACKUP_FLAG = 'nexora_media_auto_backup_v1';
    ===================================================================== */
 const VAULT_COL = '_system_vault';
 const VAULT_CHUNK = 800 * 1024;
-const VAULT_SECRET = 'nexora-system-vault-32-char-key!!';
+const VAULT_SECRET_BASE = 'nexora-system-vault-32-char-key!!';
+function getVaultSecret(){
+  // Derive per-org secret for better security - not hardcoded alone
+  const orgId = (CURRENT_USER && CURRENT_USER.orgId) || 'default';
+  const userId = (CURRENT_USER && CURRENT_USER.id) || 'system';
+  return VAULT_SECRET_BASE + '_' + orgId + '_' + userId;
+}
+const VAULT_SECRET = VAULT_SECRET_BASE; // Keep for backward compat
+
 
 function vaultU8ToB64(u8){
   let b=''; for(let i=0;i<u8.length;i+=0x8000){ b+=String.fromCharCode.apply(null, u8.subarray(i,i+0x8000)); } return btoa(b);
@@ -7985,7 +8053,8 @@ function vaultB64ToU8(b64){
   for(let i=0;i<bin.length;i++) u8[i]=bin.charCodeAt(i); return u8;
 }
 async function vaultGetKey(){
-  const h=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(VAULT_SECRET));
+  const secret = (typeof getVaultSecret === 'function') ? getVaultSecret() : VAULT_SECRET;
+  const h=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
   return crypto.subtle.importKey('raw', h, {name:'AES-GCM'}, false, ['encrypt','decrypt']);
 }
 async function vaultEncBuf(buf){
@@ -8139,6 +8208,71 @@ async function getMediaObjectUrl(localKey){
   _mediaObjectUrls[localKey] = url;
   return url;
 }
+
+// Custom Nexora URL Converter - Converts nexora://media/ and sys:// to actual blob URLs
+// This is our own converter, NOT Firebase Storage
+async function resolveNexoraUrl(nexoraUrl){
+  if(!nexoraUrl) return null;
+  const url = String(nexoraUrl).trim();
+  
+  // Already a blob or http URL
+  if(url.startsWith('blob:') || url.startsWith('http') || url.startsWith('data:')) return url;
+  
+  // sys:// URL - Resolve from Firebase Vault
+  if(url.startsWith('sys://')){
+    try{
+      const resolved = await firebaseSystemResolve(url);
+      return resolved.previewUrl;
+    }catch(e){
+      console.warn('sys:// resolve failed', e);
+      return null;
+    }
+  }
+  
+  // nexora://media/{id} - Our custom converter
+  if(url.startsWith('nexora://media/')){
+    const id = url.replace('nexora://media/','').trim();
+    const asset = getById('mediaAssets', id);
+    if(!asset) return null;
+    
+    // Try local IndexedDB first
+    if(asset.localKey){
+      const localUrl = await getMediaObjectUrl(asset.localKey);
+      if(localUrl) return localUrl;
+    }
+    
+    // Try sys:// if available
+    if(asset.sysUrl){
+      try{
+        const sysResolved = await firebaseSystemResolve(asset.sysUrl);
+        return sysResolved.previewUrl;
+      }catch(e){}
+    }
+    
+    // Fallback: check if dataB64 inline in mediaMessages
+    const msg = getAll('mediaMessages').find(m => m.mediaId === id && m.dataB64);
+    if(msg && msg.dataB64){
+      try{
+        const bin = atob(msg.dataB64);
+        const u8 = new Uint8Array(bin.length);
+        for(let i=0;i<bin.length;i++) u8[i]=bin.charCodeAt(i);
+        const blob = new Blob([u8], {type: asset.mime||'application/octet-stream'});
+        const objUrl = URL.createObjectURL(blob);
+        return objUrl;
+      }catch(e){}
+    }
+    
+    return null;
+  }
+  
+  return null;
+}
+
+// Override openMediaPreview to use our custom converter
+async function openMediaPreviewWithConverter(id){
+  return openMediaPreview(id); // Keep original but with enhanced resolver inside
+}
+
 function detectMediaKind(file){
   const t = (file.type||'').toLowerCase();
   const n = (file.name||'').toLowerCase();
@@ -8151,11 +8285,14 @@ function buildNexoraMediaUrl(id){
   return 'nexora://media/' + id;
 }
 function formatBytes(n){
+  if(n === Infinity || n === null || n === undefined) return 'Unlimited';
   n = Number(n)||0;
+  if(!isFinite(n)) return 'Unlimited';
   if(n < 1024) return n+' B';
   if(n < 1048576) return (n/1024).toFixed(1)+' KB';
   if(n < 1073741824) return (n/1048576).toFixed(1)+' MB';
-  return (n/1073741824).toFixed(2)+' GB';
+  if(n < 1099511627776) return (n/1073741824).toFixed(2)+' GB';
+  return (n/1099511627776).toFixed(2)+' TB';
 }
 
 async function convertAndUploadMediaFiles(fileList){
@@ -8219,18 +8356,39 @@ async function convertAndUploadMediaFiles(fileList){
 
 function mediaQuotaLimitBytes(){
   const role = CURRENT_USER && CURRENT_USER.role;
-  if(role === 'admin' || role === 'superadmin') return 100 * 1024 * 1024 * 1024; // 100 GB
-  return 10 * 1024 * 1024 * 1024; // 10 GB team members
+  if(role === 'superadmin') return Infinity; // Unlimited - Super Admin
+  if(role === 'admin') return 100 * 1024 * 1024 * 1024; // 100 GB - Admin
+  return 10 * 1024 * 1024 * 1024; // 10 GB - All other members
 }
 function mediaUsageBytesForUser(userId){
   const uid = userId || (CURRENT_USER && CURRENT_USER.id);
-  return getAll('mediaAssets').filter(m => m.uploadedBy === uid).reduce((s,m)=>s+(Number(m.size)||0),0);
+  const role = CURRENT_USER && CURRENT_USER.role;
+  let assets = getAll('mediaAssets');
+  let messages = getAll('mediaMessages');
+  
+  // Super Admin sees all usage if needed for org-level view
+  if(role === 'superadmin' && !userId){
+    const totalAssets = assets.reduce((s,m)=>s+(Number(m.size)||0),0);
+    const totalMessages = messages.reduce((s,m)=>s+(Number(m.size)||0),0);
+    return totalAssets + totalMessages;
+  }
+  
+  // Per-user usage: assets + inline message blobs
+  const assetUsage = assets.filter(m => m.uploadedBy === uid).reduce((s,m)=>s+(Number(m.size)||0),0);
+  const messageUsage = messages.filter(m => m.fromUserId === uid && m.dataB64).reduce((s,m)=>{
+    // Approx base64 size to bytes
+    const b64len = (m.dataB64||'').length;
+    return s + Math.ceil(b64len * 0.75);
+  },0);
+  return assetUsage + messageUsage;
 }
 function mediaQuotaInfo(){
   const used = mediaUsageBytesForUser();
   const limit = mediaQuotaLimitBytes();
-  const pct = limit ? Math.min(100, Math.round(used/limit*100)) : 0;
-  return { used, limit, pct, remain: Math.max(0, limit-used) };
+  const isUnlimited = !isFinite(limit);
+  const pct = isUnlimited ? 0 : (limit ? Math.min(100, Math.round(used/limit*100)) : 0);
+  const remain = isUnlimited ? Infinity : Math.max(0, limit-used);
+  return { used, limit, pct, remain, isUnlimited };
 }
 function mediaKindIcon(kind){
   if(kind==='video') return '🎬';
@@ -8246,7 +8404,7 @@ function teamUsersForMediaSend(){
 async function sendMediaWhatsAppStyle(file, recipientIds){
   if(!file) return;
   const q = mediaQuotaInfo();
-  if(file.size > q.remain){
+  if(!q.isUnlimited && file.size > q.remain){
     toast('Storage limit: '+formatBytes(q.remain)+' remaining (your cap '+formatBytes(q.limit)+')','error');
     return;
   }
@@ -8381,7 +8539,7 @@ function renderMediaVaultView(){
       </div>
       <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-end;">
         <div style="flex:1;min-width:200px;">
-          <div class="s-sub">Your storage · ${escapeHtml(ROLE_LABELS[me.role]||me.role)} limit ${formatBytes(q.limit)}</div>
+          <div class="s-sub">Your storage · ${escapeHtml(ROLE_LABELS[me.role]||me.role)} limit ${q.isUnlimited ? '♾️ Unlimited' : formatBytes(q.limit)} ${q.isUnlimited ? '<span style="background:linear-gradient(135deg,#10b981,#06b6d4);color:#fff;padding:2px 6px;border-radius:10px;font-size:9px;margin-left:6px">UNLIMITED</span>' : ''}</div>
           <div style="font-size:13px;margin-top:4px;"><strong>${formatBytes(q.used)}</strong> used · ${formatBytes(q.remain)} free</div>
           <div class="media-quota-bar"><div class="media-quota-fill" style="width:${q.pct}%"></div></div>
         </div>
@@ -9416,6 +9574,275 @@ window.handleDockDrop = handleDockDrop;
 
 
 
+
+/* =====================================================================
+   NEXORA GROWTH ENGINE — Promo · Plans · Payment Store
+   Yearly (HC path) ₹1199 · Promo monthly ₹99 · Store link = YOUR account
+   ===================================================================== */
+const PLAN_YEARLY_LABEL = 'Yearly access';
+const PLAN_MONTHLY_LABEL = 'Monthly access (promo)';
+
+function getPaymentStoreConfig(){
+  try{
+    const raw = localStorage.getItem('nexora_paystore_v1');
+    if(raw) return JSON.parse(raw);
+  }catch(e){}
+  if(DB && DB.meta && DB.meta.paymentStore) return DB.meta.paymentStore;
+  return { storeUrl: '', storeName: 'Nexora Store', note: 'Pay on the linked store — amount credits to platform owner account only.' };
+}
+function savePaymentStoreConfig(cfg){
+  localStorage.setItem('nexora_paystore_v1', JSON.stringify(cfg));
+  DB.meta = DB.meta || {};
+  DB.meta.paymentStore = cfg;
+  try{ persistSystemConfig(); }catch(e){}
+  saveLocalCache();
+}
+
+async function createPromoCode(opts){
+  opts = opts || {};
+  const code = (opts.code || generatePromoCode()).toUpperCase().replace(/\s+/g,'');
+  if(getAll('promoCodes').some(p => p.code === code)){
+    throw new Error('Code already exists');
+  }
+  const rec = {
+    id: uid('promo'),
+    code,
+    planUnlock: 'monthly', // unlocks ₹99 monthly
+    amount: PLAN_MONTHLY_PROMO,
+    maxUses: Number(opts.maxUses)||100,
+    usedCount: 0,
+    active: true,
+    note: opts.note || '',
+    createdAt: new Date().toISOString(),
+    createdBy: CURRENT_USER ? CURRENT_USER.id : null
+  };
+  await upsert('promoCodes', rec);
+  logActivity('Promo', 'Created promo '+code);
+  return rec;
+}
+
+function findPromo(code){
+  if(!code) return null;
+  const c = String(code).trim().toUpperCase();
+  return getAll('promoCodes').find(p => p.code === c && p.active !== false) || null;
+}
+
+function validatePromoForUse(code){
+  const p = findPromo(code);
+  if(!p) return { ok:false, error:'Invalid promo code' };
+  if(p.active === false) return { ok:false, error:'Promo disabled' };
+  if(p.maxUses >= 0 && (p.usedCount||0) >= p.maxUses) return { ok:false, error:'Promo usage limit reached' };
+  return { ok:true, promo:p, plan:'monthly', amount: PLAN_MONTHLY_PROMO };
+}
+
+async function consumePromo(code){
+  const v = validatePromoForUse(code);
+  if(!v.ok) return v;
+  const p = v.promo;
+  p.usedCount = (p.usedCount||0) + 1;
+  await upsert('promoCodes', p);
+  return v;
+}
+
+function sessionPromo(){
+  try{ return sessionStorage.getItem('nexora_login_promo') || ''; }catch(e){ return ''; }
+}
+function setSessionPromo(code){
+  try{
+    if(code) sessionStorage.setItem('nexora_login_promo', String(code).toUpperCase());
+    else sessionStorage.removeItem('nexora_login_promo');
+  }catch(e){}
+}
+
+function buildStoreCheckoutUrl(plan, amount, refId, promo){
+  const cfg = getPaymentStoreConfig();
+  const base = (cfg.storeUrl||'').trim();
+  if(!base) return '';
+  try{
+    const u = new URL(base);
+    u.searchParams.set('nexora_plan', plan);
+    u.searchParams.set('nexora_amount', String(amount));
+    u.searchParams.set('nexora_ref', refId||'');
+    if(promo) u.searchParams.set('nexora_promo', promo);
+    return u.toString();
+  }catch(e){
+    const sep = base.includes('?') ? '&' : '?';
+    return base + sep + 'nexora_plan='+encodeURIComponent(plan)+'&nexora_amount='+amount+'&nexora_ref='+encodeURIComponent(refId||'');
+  }
+}
+
+async function createSubscriptionRecord({ userId, orgId, plan, amount, promoCode, source, status }){
+  const now = new Date();
+  const expires = new Date(now);
+  if(plan === 'monthly') expires.setMonth(expires.getMonth()+1);
+  else expires.setFullYear(expires.getFullYear()+1);
+  const rec = {
+    id: uid('sub'),
+    userId: userId||null,
+    orgId: orgId||null,
+    plan: plan||'yearly',
+    amount: Number(amount)||0,
+    promoCode: promoCode||null,
+    source: source||'direct', // direct | hybrid_closer | promo_login
+    status: status||'pending_payment', // pending_payment | active | expired | cancelled
+    paymentRef: '',
+    storeUrlUsed: buildStoreCheckoutUrl(plan, amount, null, promoCode),
+    createdAt: now.toISOString(),
+    expiresAt: expires.toISOString()
+  };
+  await upsert('subscriptions', rec);
+  return rec;
+}
+
+function renderPaystoreView(){
+  if(!CURRENT_USER || CURRENT_USER.role !== 'superadmin'){
+    document.getElementById('view-paystore').innerHTML = emptyState('💳','Super Admin only','Payment store link platform owner set karta hai.');
+    return;
+  }
+  const cfg = getPaymentStoreConfig();
+  document.getElementById('view-paystore').innerHTML = `
+    <div class="panel glass">
+      <div class="panel-head"><div class="panel-title">Payment Store Link</div></div>
+      <p class="cell-dim" style="margin:0 0 14px;line-height:1.5;">Apna store / payment page link daalo. Client yahin se pay karega — amount <strong>seedha tumhare account</strong> mein aayega (Nexora beech mein nahi).</p>
+      <div class="field"><label>Store name</label>
+        <input id="ps_name" value="${escapeHtml(cfg.storeName||'')}" placeholder="My Razorpay / Stripe / custom store"></div>
+      <div class="field"><label>Store / payment URL</label>
+        <input id="ps_url" value="${escapeHtml(cfg.storeUrl||'')}" placeholder="https://your-store-or-payment-link.com/..."></div>
+      <div class="field"><label>Note (shown to closers / clients)</label>
+        <textarea id="ps_note" rows="2">${escapeHtml(cfg.note||'')}</textarea></div>
+      <div class="locked-note">Plans: Hybrid Closer sale → <strong>₹${PLAN_YEARLY_HC}/year</strong> · Promo unlock → <strong>₹${PLAN_MONTHLY_PROMO}/month</strong></div>
+      <div style="margin-top:14px;"><button class="btn btn-primary" onclick="savePaystoreFromUI()">Save store link</button></div>
+    </div>`;
+}
+function savePaystoreFromUI(){
+  const cfg = {
+    storeName: document.getElementById('ps_name').value.trim() || 'Nexora Store',
+    storeUrl: document.getElementById('ps_url').value.trim(),
+    note: document.getElementById('ps_note').value.trim()
+  };
+  if(cfg.storeUrl && !/^https?:\/\//i.test(cfg.storeUrl)){
+    toast('URL https:// se start hona chahiye','error'); return;
+  }
+  savePaymentStoreConfig(cfg);
+  toast('Payment store saved','success');
+  logActivity('PayStore', 'Store link updated');
+}
+
+function renderPromosView(){
+  if(!CURRENT_USER || CURRENT_USER.role !== 'superadmin'){
+    document.getElementById('view-promos').innerHTML = emptyState('🏷','Super Admin only','Promo codes platform owner generate karta hai.');
+    return;
+  }
+  const rows = getAll('promoCodes').slice().sort((a,b)=> new Date(b.createdAt)-new Date(a.createdAt));
+  document.getElementById('view-promos').innerHTML = `
+    <div class="stat-grid">
+      <div class="stat-card glass"><div class="ic-badge bg-violet">🏷</div><div class="stat-val">${rows.length}</div><div class="stat-label">Codes</div></div>
+      <div class="stat-card glass"><div class="ic-badge bg-green">✓</div><div class="stat-val">${rows.filter(p=>p.active!==false).length}</div><div class="stat-label">Active</div></div>
+      <div class="stat-card glass"><div class="ic-badge bg-amber">₹</div><div class="stat-val">${PLAN_MONTHLY_PROMO}</div><div class="stat-label">Monthly unlock</div></div>
+    </div>
+    <div class="panel glass" style="margin-bottom:16px;">
+      <div class="panel-head"><div class="panel-title">Generate promo</div>
+        <button class="btn btn-primary btn-sm" onclick="handleGeneratePromo()">+ Generate code</button></div>
+      <p class="cell-dim" style="margin:0;line-height:1.5;">Social page pe code share karo. User login screen pe paste kare → <strong>monthly ₹${PLAN_MONTHLY_PROMO}</strong> unlock. Bina code ke yearly lock rehta hai.</p>
+    </div>
+    <div class="panel glass">
+      <div class="panel-head"><div class="panel-title">All codes</div></div>
+      <div class="table-wrap"><table class="data-table"><thead><tr>
+        <th>Code</th><th>Unlock</th><th>Uses</th><th>Status</th><th>Created</th><th></th>
+      </tr></thead><tbody>
+        ${rows.map(p=>`<tr>
+          <td class="cell-strong" style="font-family:ui-monospace,monospace;letter-spacing:0.04em;">${escapeHtml(p.code)}</td>
+          <td>Monthly ₹${p.amount||PLAN_MONTHLY_PROMO}</td>
+          <td>${p.usedCount||0} / ${p.maxUses<0?'∞':p.maxUses}</td>
+          <td><span class="status-pill status-${p.active!==false?'active':'disabled'}">${p.active!==false?'Active':'Off'}</span></td>
+          <td class="cell-dim">${fmtDate(p.createdAt)}</td>
+          <td>
+            <button class="btn btn-ghost btn-sm" onclick="navigator.clipboard.writeText('${p.code}');toast('Copied','success')">Copy</button>
+            <button class="btn btn-ghost btn-sm" onclick="togglePromoActive('${p.id}')">${p.active!==false?'Disable':'Enable'}</button>
+          </td>
+        </tr>`).join('')||'<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-faint)">No promos yet</td></tr>'}
+      </tbody></table></div>
+    </div>`;
+}
+async function handleGeneratePromo(){
+  const maxUses = prompt('Max uses for this code?', '100');
+  if(maxUses === null) return;
+  try{
+    const rec = await createPromoCode({ maxUses: Number(maxUses)||100 });
+    toast('Promo: '+rec.code,'success');
+    renderPromosView();
+  }catch(e){ toast(e.message||'Failed','error'); }
+}
+async function togglePromoActive(id){
+  const p = getById('promoCodes', id);
+  if(!p) return;
+  p.active = p.active === false ? true : false;
+  await upsert('promoCodes', p);
+  renderPromosView();
+}
+
+function renderSubscriptionsView(){
+  if(!CURRENT_USER || CURRENT_USER.role !== 'superadmin'){
+    document.getElementById('view-subscriptions').innerHTML = emptyState('◈','Super Admin only','');
+    return;
+  }
+  const rows = getAll('subscriptions').slice().sort((a,b)=> new Date(b.createdAt)-new Date(a.createdAt));
+  const cfg = getPaymentStoreConfig();
+  document.getElementById('view-subscriptions').innerHTML = `
+    <div class="stat-grid">
+      <div class="stat-card glass"><div class="stat-val">${rows.length}</div><div class="stat-label">Total</div></div>
+      <div class="stat-card glass"><div class="stat-val">${rows.filter(s=>s.status==='active').length}</div><div class="stat-label">Active</div></div>
+      <div class="stat-card glass"><div class="stat-val">${rows.filter(s=>s.status==='pending_payment').length}</div><div class="stat-label">Pending pay</div></div>
+    </div>
+    <div class="panel glass" style="margin-bottom:14px;">
+      <div class="panel-head"><div class="panel-title">Quick create</div></div>
+      <p class="cell-dim" style="margin:0 0 10px;">HC path = yearly ₹${PLAN_YEARLY_HC} · Promo path = monthly ₹${PLAN_MONTHLY_PROMO}</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" onclick="quickSub('yearly')">+ Yearly ₹${PLAN_YEARLY_HC} pending</button>
+        <button class="btn btn-ghost btn-sm" onclick="quickSub('monthly')">+ Monthly ₹${PLAN_MONTHLY_PROMO} pending</button>
+        ${cfg.storeUrl?`<a class="btn btn-ghost btn-sm" href="${escapeHtml(cfg.storeUrl)}" target="_blank" rel="noopener">Open store ↗</a>`:''}
+      </div>
+    </div>
+    <div class="panel glass">
+      <div class="table-wrap"><table class="data-table"><thead><tr>
+        <th>Plan</th><th>Amount</th><th>Source</th><th>Promo</th><th>Status</th><th>Expires</th><th></th>
+      </tr></thead><tbody>
+        ${rows.map(s=>`<tr>
+          <td class="cell-strong">${escapeHtml(s.plan)}</td>
+          <td>₹${s.amount}</td>
+          <td>${escapeHtml(s.source||'—')}</td>
+          <td class="cell-dim">${escapeHtml(s.promoCode||'—')}</td>
+          <td><span class="status-pill status-${s.status==='active'?'active':'disabled'}">${escapeHtml(s.status)}</span></td>
+          <td class="cell-dim">${fmtDate(s.expiresAt)}</td>
+          <td>
+            ${s.status!=='active'?`<button class="btn btn-ghost btn-sm" onclick="markSubActive('${s.id}')">Mark paid</button>`:''}
+            ${s.storeUrlUsed?`<a class="btn btn-ghost btn-sm" href="${escapeHtml(s.storeUrlUsed)}" target="_blank">Pay link</a>`:''}
+          </td>
+        </tr>`).join('')||'<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-faint)">No subscriptions yet</td></tr>'}
+      </tbody></table></div>
+    </div>`;
+}
+async function quickSub(plan){
+  const amount = plan==='monthly' ? PLAN_MONTHLY_PROMO : PLAN_YEARLY_HC;
+  const sub = await createSubscriptionRecord({
+    plan, amount, source: plan==='monthly'?'promo_path':'hybrid_closer', status:'pending_payment'
+  });
+  const url = buildStoreCheckoutUrl(plan, amount, sub.id, null);
+  if(url){ sub.storeUrlUsed = url; await upsert('subscriptions', sub); }
+  toast('Subscription created — open Pay link','success');
+  renderSubscriptionsView();
+}
+async function markSubActive(id){
+  const s = getById('subscriptions', id);
+  if(!s) return;
+  s.status = 'active';
+  s.paidAt = new Date().toISOString();
+  await upsert('subscriptions', s);
+  toast('Marked active','success');
+  renderSubscriptionsView();
+}
+
+
 const RENDER_MAP = {
   dashboard: renderDashboard,
   kanban: renderKanbanView,
@@ -9436,6 +9863,9 @@ const RENDER_MAP = {
   emailfollowup: renderEmailFollowupView,
   emaillogs: renderEmailLogsView,
   terminal: renderTerminalView,
+  promos: renderPromosView,
+  subscriptions: renderSubscriptionsView,
+  paystore: renderPaystoreView,
   settings: renderSettingsView,
   orgs: renderOrgsView,
   hierarchy: renderHierarchyView,
