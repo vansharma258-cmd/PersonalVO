@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2136,8 +2137,6 @@ const NAV_CONFIG = {
     {group:'Tools', items:[
       {view:'terminal', ic:'>_', label:'Terminal'},
       {view:'mediavault', ic:'🗂', label:'Team media'},
-      {view:'emailfollowup', ic:'📧', label:'Email Follow-up'},
-      {view:'emaillogs', ic:'📭', label:'Email Logs'},
       {view:'notifcompose', ic:'✉', label:'Send Notification'}
     ]},
     {group:'System', items:[
@@ -2165,7 +2164,6 @@ const NAV_CONFIG = {
       {view:'mediavault', ic:'🗂', label:'Team media'}
     ]},
     {group:'Outreach', items:[
-      {view:'emailfollowup', ic:'📧', label:'Email Follow-up'},
       {view:'emaillogs', ic:'📭', label:'Email Logs'}
     ]},
     {group:'Support', items:[
@@ -7723,6 +7721,11 @@ function abortEmailQueue(){
 }
 
 function renderEmailFollowupView(){
+  // Platform-owner mail engine only (Super Admin)
+  if(!CURRENT_USER || CURRENT_USER.role !== 'superadmin'){
+    document.getElementById('view-emailfollowup').innerHTML = emptyState('📧','Super Admin only','Gmail follow-up engine platform owner ke liye hai. Org Admin leads manage kare — mail Super Admin se.');
+    return;
+  }
   const leads = getAll('leads').slice().sort((a,b)=> (a.clientName||'').localeCompare(b.clientName||''));
   const configured = isEmailConfigured();
   const s = getEmailSettings();
@@ -7733,12 +7736,14 @@ function renderEmailFollowupView(){
       <div class="panel-head">
         <div class="panel-title">Nexora Mail — Follow-up</div>
         <div class="panel-actions">
-          <button class="btn btn-ghost btn-sm" onclick="navigateTo('settings')">Mail setup</button>
+          ${gmailOn
+            ? `<button class="btn btn-ghost btn-sm" onclick="disconnectNexoraGmail();renderEmailFollowupView()">Disconnect Gmail</button>`
+            : `<button class="btn btn-primary btn-sm" onclick="connectNexoraGmail({onDone:()=>renderEmailFollowupView()})">Connect Gmail</button>`}
           <button class="btn btn-ghost btn-sm" onclick="navigateTo('emaillogs')">Logs</button>
         </div>
       </div>
       ${configured
-        ? `<div class="locked-note" style="border-color:rgba(34,197,94,0.3)">✓ Nexora Mail ready (${escapeHtml(s.provider)}${s.provider==='gmail'?(gmailOn?' · Gmail linked':''):''}). Selected leads ko automatic send hoga — alag se Gmail kholne ki zaroorat nahi.</div>`
+        ? `<div class="locked-note" style="border-color:rgba(34,197,94,0.3)">✓ Nexora Mail ready (${escapeHtml(s.provider)}${s.provider==='gmail'?(gmailOn?' · '+escapeHtml(s.fromEmail||'Gmail linked'):''):''}). Selected leads ko automatic send — Settings/password page pe jaane ki zaroorat nahi.</div>`
         : `<div class="locked-note">⚠ Nexora Mail setup incomplete. Settings → <strong>Connect Gmail</strong> (apna Google account) ya Webhook. Yeh Nexora ka built-in engine hai — EmailJS nahi.</div>`}
       <div id="emailQueueStatus" style="margin-bottom:12px;font-size:13px;"></div>
       <div class="form-grid2">
@@ -7830,6 +7835,11 @@ async function startEmailFollowupSend(){
 }
 
 function renderEmailLogsView(){
+  if(!CURRENT_USER || CURRENT_USER.role !== 'superadmin'){
+    document.getElementById('view-emaillogs').innerHTML = emptyState('📭','Super Admin only','Email logs platform owner ke liye reserved hain.');
+    return;
+  }
+
   const logs = getAll('emailLogs').slice().sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0)).slice(0,200);
   const sent = logs.filter(l=>l.status==='sent').length;
   const failed = logs.filter(l=>l.status==='failed').length;
